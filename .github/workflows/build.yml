@@ -13,24 +13,17 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2.13.0
         with:
-          channel: stable  # Use stable channel instead of main
+          channel: stable
           
-      - run: flutter --version  # Verify Flutter version
+      - run: flutter --version
       - run: flutter pub get
-
-      - run: mkdir -p build/windows/x64/runner/Release
       - run: flutter build windows --release
-      - name: List Windows Build Directory
-        run: dir build/windows/x64/runner/Release
-      - name: zip everything
-        run: |
-          cd build/windows/x64/runner/Release
-          Compress-Archive -Path * -DestinationPath namer-windows.zip
-      - name: Upload binary
+
+      - name: Upload Windows Build
         uses: actions/upload-artifact@v4
         with:
-          name: windows-zip
-          path: build/windows/x64/runner/Release/namer-windows.zip
+          name: windows-build
+          path: build/windows/x64/runner/Release
 
   build_linux:
     name: Build Linux
@@ -42,29 +35,23 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2.13.0
         with:
-          channel: stable  # Use stable channel instead of main
+          channel: stable
           
-      - run: flutter --version  # Verify Flutter version
+      - run: flutter --version
       - run: sudo apt-get update
       - run: sudo apt-get install -y ninja-build cmake libgtk-3-dev
       - run: flutter pub get
-
-      - run: mkdir -p build/linux/x64/release/bundle
       - run: flutter build linux --release
-      - name: List Linux Build Directory
-        run: ls -alh build/linux/x64/release/bundle
-      - name: zip everything
-        run: |
-          cd build/linux/x64/release/bundle
-          zip -r namer.zip *
-      - name: Upload binary
+
+      - name: Upload Linux Build
         uses: actions/upload-artifact@v4
         with:
-          name: linux-zip
-          path: build/linux/x64/release/bundle/namer.zip
+          name: linux-build
+          path: build/linux/x64/release/bundle
 
   upload-release:
-    permissions: write-all
+    permissions:
+      contents: write
     needs: [build_linux, build_windows]
     runs-on: ubuntu-latest
     steps:
@@ -77,29 +64,36 @@ jobs:
           VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Download Windows ZIP
+      - name: Download Windows Build
         uses: actions/download-artifact@v4
         with:
-          name: windows-zip
-          path: ./out/windows
+          name: windows-build
+          path: release/windows
 
-      - name: Download Linux ZIP
+      - name: Download Linux Build
         uses: actions/download-artifact@v4
         with:
-          name: linux-zip
-          path: ./out/linux
+          name: linux-build
+          path: release/linux
 
-      - name: List output directory
-        run: ls -R ./out
+      - name: Create Windows ZIP
+        run: |
+          cd release/windows
+          zip -r namer-windows.zip *
+
+      - name: Create Linux ZIP
+        run: |
+          cd release/linux
+          zip -r namer-linux.zip *
 
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: |
-            ./out/windows/namer-windows.zip
-            ./out/linux/namer.zip
+            release/windows/namer-windows.zip
+            release/linux/namer-linux.zip
           tag_name: v${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
           draft: false
