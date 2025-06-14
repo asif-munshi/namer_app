@@ -6,19 +6,15 @@ jobs:
   build_windows:
     name: Build Windows
     runs-on: windows-latest
-
     steps:
       - uses: actions/checkout@v4
-      
       - name: Set up Flutter
         uses: subosito/flutter-action@v2.13.0
         with:
           channel: stable
-          
       - run: flutter --version
       - run: flutter pub get
       - run: flutter build windows --release
-
       - name: Upload Windows Build
         uses: actions/upload-artifact@v4
         with:
@@ -28,64 +24,105 @@ jobs:
   build_linux:
     name: Build Linux
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-      
       - name: Set up Flutter
         uses: subosito/flutter-action@v2.13.0
         with:
           channel: stable
-          
       - run: flutter --version
       - run: sudo apt-get update
       - run: sudo apt-get install -y ninja-build cmake libgtk-3-dev
       - run: flutter pub get
       - run: flutter build linux --release
-
       - name: Upload Linux Build
         uses: actions/upload-artifact@v4
         with:
           name: linux-build
           path: build/linux/x64/release/bundle
 
+  build_android:
+    name: Build APK
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '20'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter --version
+      - run: sudo apt-get update
+      - run: flutter pub get
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE }}" | base64 --decode > android/app/keystore.jks
+      - name: Build APK
+        run: |
+          flutter build apk --release
+        env:
+          KEYSTORE_FILE: keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - name: Verify APK signature (jarsigner)
+        run: |
+          jarsigner -verify -verbose -certs build/app/outputs/flutter-apk/app-release.apk
+      - name: List APK Directory
+        run: ls -alh ${{ github.workspace }}/build/app/outputs/flutter-apk
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: ${{ github.workspace }}/build/app/outputs/flutter-apk/app-release.apk
+
   upload-release:
     permissions:
       contents: write
-    needs: [build_linux, build_windows]
+    needs: [build_linux, build_windows, build_android]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Read version from pubspec.yaml
         id: version
         run: |
           VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | tr -d ' ')
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Download Windows Build
         uses: actions/download-artifact@v4
         with:
           name: windows-build
           path: release/windows
-
       - name: Download Linux Build
         uses: actions/download-artifact@v4
         with:
           name: linux-build
           path: release/linux
-
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: release/android
       - name: Create Windows ZIP
         run: |
           cd release/windows
           zip -r namer-windows.zip *
-
       - name: Create Linux ZIP
         run: |
           cd release/linux
           zip -r namer-linux.zip *
-
+      - name: Rename Android APK
+        run: |
+          cd release/android
+          mv app-release.apk namer-android-${{ steps.version.outputs.VERSION }}.apk
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         env:
@@ -94,6 +131,7 @@ jobs:
           files: |
             release/windows/namer-windows.zip
             release/linux/namer-linux.zip
+            release/android/namer-android-${{ steps.version.outputs.VERSION }}.apk
           tag_name: v${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
           draft: false
